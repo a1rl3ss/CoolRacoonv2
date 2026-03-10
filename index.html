@@ -1,24 +1,24 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Raccoon AI: Simple & Fast</title>
+    <title>Raccoon AI: Python Logic Port</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     <style>
         body { background: #1a1a1a; color: white; font-family: sans-serif; text-align: center; margin: 0; }
         .container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
-        #webcam { transform: rotateY(180deg); width: 320px; border-radius: 10px; border: 2px solid #555; }
-        #raccoon_view { width: 350px; height: 350px; object-fit: contain; margin-top: 15px; }
-        .status { margin-top: 10px; font-size: 1.2em; color: #0f0; font-weight: bold; }
+        #webcam { transform: rotateY(180deg); width: 320px; border-radius: 12px; border: 2px solid #444; }
+        #raccoon_view { width: 350px; height: 350px; object-fit: contain; margin-top: 10px; }
+        #status { margin-top: 10px; font-weight: bold; color: #0f0; }
     </style>
 </head>
 <body>
     <div class="container">
         <video id="webcam" autoplay playsinline></video>
         <img id="raccoon_view" src="normal.png">
-        <div id="status" class="status">Загрузка...</div>
+        <div id="status">Загрузка нейросетей...</div>
     </div>
 
     <script>
@@ -28,7 +28,7 @@
 
         let currentEmotion = "normal.png";
 
-        // 1. Настройка нейросетей
+        // Инициализация моделей
         const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
         pose.setOptions({ modelComplexity: 1, minDetectionConfidence: 0.5 });
 
@@ -36,70 +36,68 @@
         hands.setOptions({ maxNumHands: 2, minDetectionConfidence: 0.5 });
 
         const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
-        faceMesh.setOptions({ maxNumFaces: 1, minDetectionConfidence: 0.5 });
+        faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5 });
 
-        // Флаг, чтобы лицо не перебивало жесты рук
-        let gestureActive = false;
+        let gestureFound = false;
 
-        // ЛОГИКА ТЕЛА (Поворот головы -> pls)
+        // ПЕРЕНОС ЛОГИКИ ИЗ PYTHON
         pose.onResults((results) => {
             if (results.poseLandmarks) {
                 const p = results.poseLandmarks;
                 const nose = p[0], l_ear = p[7], r_ear = p[8];
+                const l_wrist = p[15], r_wrist = p[16];
+                const l_shoulder = p[11], r_shoulder = p[12];
 
-                // ПОВОРОТ ГОЛОВЫ (условие стало мягче: 0.6 вместо 0.4)
-                const distL = Math.abs(nose.x - l_ear.x);
-                const distR = Math.abs(nose.x - r_ear.x);
+                gestureFound = true;
                 
-                if (distL < distR * 0.6 || distR < distL * 0.6) {
-                    updateImg("pls.png");
-                    gestureActive = true;
-                } else {
-                    gestureActive = false;
+                // 1. Поворот головы (pls.png) - условие: 0.4
+                if (Math.abs(nose.x - l_ear.x) < Math.abs(nose.x - r_ear.x) * 0.4) {
+                    update("pls.png");
+                }
+                // 2. Руки выше носа (beg.png или cinema.png)
+                else if (l_wrist.y < nose.y - 0.1 && r_wrist.y < nose.y - 0.1) {
+                    if (Math.abs(l_wrist.x - r_wrist.x) < 0.15) update("beg.png");
+                    else update("cinema.png");
+                }
+                // 3. Пистолет (gun.png) - если одна рука или по Z-глубине
+                else if (l_wrist.z < l_shoulder.z - 0.7 || r_wrist.z < r_shoulder.z - 0.7) {
+                    update("gun.png");
+                }
+                // 4. Рука у лица (hard.png)
+                else if (l_wrist.y < nose.y && Math.abs(l_wrist.x - nose.x) < 0.2) {
+                    update("hard.png");
+                }
+                else {
+                    gestureFound = false;
                 }
             }
         });
 
-        // ЛОГИКА РУК (1 рука -> gun, 2 руки -> beg/cinema)
+        // Доп. проверка: если видим ровно 1 руку через Hands API -> gun.png
         hands.onResults((results) => {
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                gestureActive = true;
-                
-                if (results.multiHandLandmarks.length === 1) {
-                    // ВИДИМ 1 РУКУ -> ПУШКА
-                    updateImg("gun.png");
-                } 
-                else if (results.multiHandLandmarks.length === 2) {
-                    // ВИДИМ 2 РУКИ -> BEG или CINEMA
-                    const h1 = results.multiHandLandmarks[0][0];
-                    const h2 = results.multiHandLandmarks[1][0];
-                    const dist = Math.abs(h1.x - h2.x);
-                    
-                    if (dist < 0.2) updateImg("beg.png");
-                    else updateImg("cinema.png");
-                }
-            } else if (!gestureActive) {
-                // Если рук нет и голова прямо - будет normal (обновится в FaceMesh)
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length === 1) {
+                update("gun.png");
+                gestureFound = true;
             }
         });
 
-        // ЛОГИКА ЛИЦА (Shock, Cool)
+        // Лицевые эмоции (cool, shock)
         faceMesh.onResults((results) => {
-            if (!gestureActive && results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+            if (!gestureFound && results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 const f = results.multiFaceLandmarks[0];
-                const mouthOpen = Math.abs(f[13].y - f[14].y);
-                
-                if (mouthOpen >= 0.045) updateImg("shock.png");
-                else if (mouthOpen > 0.018) updateImg("cool.png");
-                else updateImg("normal.png");
+                const mouth_open = Math.abs(f[13].y - f[14].y);
+
+                if (mouth_open >= 0.045) update("shock.png");
+                else if (mouth_open > 0.018) update("cool.png");
+                else update("normal.png");
             }
         });
 
-        function updateImg(name) {
+        function update(name) {
             if (currentEmotion !== name) {
                 currentEmotion = name;
                 raccoonImg.src = name;
-                status.innerText = "Эмоция: " + name.replace(".png", "");
+                status.innerText = "Активен: " + name.replace(".png", "");
             }
         }
 
@@ -111,7 +109,7 @@
             },
             width: 640, height: 480
         });
-        camera.start().then(() => status.innerText = "Система активна ✅");
+        camera.start().then(() => status.innerText = "Система НОРМАЛЬНО работает ✅");
     </script>
 </body>
 </html>
