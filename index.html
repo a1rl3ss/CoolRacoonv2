@@ -1,161 +1,105 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Raccoon AI: Ultimate Edition</title>
+    <title>Raccoon AI: Exact Logic</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-    
     <style>
-        body { background: #1a1a1a; color: white; font-family: 'Segoe UI', sans-serif; text-align: center; margin: 0; overflow: hidden; }
-        .container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 10px; }
-        
-        #webcam { 
-            transform: rotateY(180deg); 
-            width: 360px; 
-            border-radius: 20px; 
-            border: 3px solid #3498db;
-            box-shadow: 0 0 20px rgba(52, 152, 219, 0.5);
-        }
-        
-        #raccoon_view { 
-            width: 320px; 
-            height: 320px; 
-            object-fit: contain; 
-            transition: all 0.3s ease;
-        }
-        
-        .info-panel {
-            background: rgba(0,0,0,0.7);
-            padding: 15px 25px;
-            border-radius: 12px;
-            border: 1px solid #444;
-        }
-        
-        #status { font-weight: bold; }
-        .detected { color: #2ecc71; }
-        .waiting { color: #f1c40f; }
+        body { background: #1a1a1a; color: white; font-family: sans-serif; text-align: center; margin: 0; }
+        .container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+        #webcam { transform: rotateY(180deg); width: 320px; border-radius: 10px; border: 2px solid #555; }
+        #raccoon_view { width: 350px; height: 350px; object-fit: contain; margin-top: 15px; }
+        .status { margin-top: 10px; font-size: 1.1em; color: #0f0; }
     </style>
 </head>
 <body>
-
     <div class="container">
-        <h2 style="margin: 0;">🦝 Raccoon AI System</h2>
-        
         <video id="webcam" autoplay playsinline></video>
-        
         <img id="raccoon_view" src="normal.png">
-        
-        <div class="info-panel">
-            Статус: <span id="status" class="waiting">Загрузка модулей...</span><br>
-            <div style="margin-top: 5px; font-size: 1.2em;">
-                Текущий енот: <span id="emo_label" style="color: #3498db;">normal</span>
-            </div>
-        </div>
+        <div id="status" class="status">Настройка системы...</div>
     </div>
 
     <script>
         const video = document.getElementById('webcam');
         const raccoonImg = document.getElementById('raccoon_view');
-        const statusTxt = document.getElementById('status');
-        const emoLabel = document.getElementById('emo_label');
+        const status = document.getElementById('status');
 
         let currentEmotion = "normal.png";
 
-        // --- НАСТРОЙКА НЕЙРОСЕТЕЙ ---
-        
+        // 1. ПОДКЛЮЧАЕМ ПОЗУ (для жестов beg, cinema, gun, pls, hard)
+        const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+        pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5 });
+
+        // 2. ПОДКЛЮЧАЕМ ЛИЦО (для cool, shock)
         const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
         faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5 });
 
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6 });
+        // ЛОГИКА ЖЕСТОВ (КОПИЯ ТВОЕГО PYTHON КОДА)
+        pose.onResults((results) => {
+            if (results.poseLandmarks) {
+                const p = results.poseLandmarks;
+                const nose = p[0], l_ear = p[7], r_ear = p[8];
+                const l_wrist = p[15], r_wrist = p[16];
+                const l_shoulder = p[11], r_shoulder = p[12];
 
-        // --- ЛОГИКА ЛИЦА (Shock, Cool, Sad) ---
-        
+                let detected = "normal.png";
+
+                // ТВОИ УСЛОВИЯ:
+                // 1. Поворот головы (pls)
+                if (Math.abs(nose.x - l_ear.x) < Math.abs(nose.x - r_ear.x) * 0.4) {
+                    detected = "pls.png";
+                }
+                // 2. Руки выше носа (beg / cinema)
+                else if (l_wrist.y < nose.y - 0.1 && r_wrist.y < nose.y - 0.1) {
+                    detected = Math.abs(l_wrist.x - r_wrist.x) < 0.15 ? "beg.png" : "cinema.png";
+                }
+                // 3. Пистолет (проверка по Z)
+                else if (l_wrist.z < l_shoulder.z - 0.1 || r_wrist.z < r_shoulder.z - 0.1) {
+                    detected = "gun.png";
+                }
+                // 4. Рука у лица (hard)
+                else if (l_wrist.y < nose.y && Math.abs(l_wrist.x - nose.x) < 0.2) {
+                    detected = "hard.png";
+                }
+
+                if (detected !== "normal.png") {
+                    updateImg(detected);
+                    return; // Если нашли жест, лицо не проверяем
+                }
+            }
+            // Если жестов нет, переходим к лицу
+            faceActive = true;
+        });
+
         faceMesh.onResults((results) => {
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 const f = results.multiFaceLandmarks[0];
-                
-                // Расчет открытия рта
                 const mouthOpen = Math.abs(f[13].y - f[14].y);
-                // Уголки губ вниз для грусти
-                const isSad = f[61].y > f[13].y + 0.012 && f[291].y > f[13].y + 0.012;
-
-                if (mouthOpen > 0.05) setEmo("shock.png");
-                else if (mouthOpen > 0.02) setEmo("cool.png");
-                else if (isSad) setEmo("sad.png");
-                else if (!isHandGestureActive()) setEmo("normal.png");
+                
+                // ТВОИ УСЛОВИЯ ДЛЯ ЛИЦА:
+                if (mouthOpen >= 0.045) updateImg("shock.png");
+                else if (mouthOpen > 0.018) updateImg("cool.png");
+                else updateImg("normal.png");
             }
         });
 
-        // --- ЛОГИКА РУК (Beg, Cinema, Gun, Pls) ---
-        
-        let handActive = false;
-
-        hands.onResults((results) => {
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                handActive = true;
-                const hLms = results.multiHandLandmarks;
-
-                // ДВЕ РУКИ В КАДРЕ
-                if (hLms.length === 2) {
-                    const h1 = hLms[0][0]; // запястье 1
-                    const h2 = hLms[1][0]; // запястье 2
-                    const dist = Math.abs(h1.x - h2.x);
-
-                    if (h1.y < 0.5 && h2.y < 0.5) {
-                        if (dist < 0.18) setEmo("beg.png");    // Руки вместе
-                        else setEmo("cinema.png");             // Руки врозь
-                    }
-                } 
-                // ОДНА РУКА В КАДРЕ
-                else {
-                    const h = hLms[0];
-                    const indexTip = h[8];
-                    const wrist = h[0];
-
-                    // Пистолет
-                    if (Math.abs(indexTip.x - wrist.x) > 0.3 && indexTip.y < wrist.y) {
-                        setEmo("gun.png");
-                    }
-                    // Пожалуйста
-                    else if (wrist.y < 0.4) {
-                        setEmo("pls.png");
-                    }
-                }
-            } else {
-                handActive = false;
-            }
-        });
-
-        // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-
-        function setEmo(name) {
+        function updateImg(name) {
             if (currentEmotion !== name) {
                 currentEmotion = name;
                 raccoonImg.src = name;
-                emoLabel.innerText = name.replace(".png", "");
+                status.innerText = "Эмоция: " + name.replace(".png", "");
             }
-        }
-
-        function isHandGestureActive() {
-            return ["beg.png", "cinema.png", "gun.png", "pls.png"].includes(currentEmotion) && handActive;
-        }
-
-        function onStatusChange(ok) {
-            statusTxt.innerText = ok ? "Система активна ✅" : "Камера не видит лицо";
-            statusTxt.className = ok ? "detected" : "waiting";
         }
 
         const camera = new Camera(video, {
             onFrame: async () => {
+                await pose.send({image: video});
                 await faceMesh.send({image: video});
-                await hands.send({image: video});
-                onStatusChange(true);
             },
             width: 640, height: 480
         });
-        camera.start();
+        camera.start().then(() => status.innerText = "Система активна ✅");
     </script>
 </body>
 </html>
