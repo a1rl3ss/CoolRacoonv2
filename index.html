@@ -1,64 +1,158 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Raccoon AI Web</title>
+    <title>Raccoon AI: Ultimate Edition</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+    
     <style>
-        body { text-align: center; background: #222; color: white; font-family: sans-serif; }
-        .container { position: relative; display: inline-block; }
-        #webcam { transform: rotateY(180deg); width: 640px; height: 480px; background: #000; }
-        #output_canvas { position: absolute; left: 0; top: 0; transform: rotateY(180deg); }
-        #raccoon_view { width: 300px; height: 300px; margin-top: 20px; border: 2px solid #555; }
+        body { background: #1a1a1a; color: white; font-family: 'Segoe UI', sans-serif; text-align: center; margin: 0; overflow: hidden; }
+        .container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 10px; }
+        
+        #webcam { 
+            transform: rotateY(180deg); 
+            width: 360px; 
+            border-radius: 20px; 
+            border: 3px solid #3498db;
+            box-shadow: 0 0 20px rgba(52, 152, 219, 0.5);
+        }
+        
+        #raccoon_view { 
+            width: 320px; 
+            height: 320px; 
+            object-fit: contain; 
+            transition: all 0.3s ease;
+        }
+        
+        .info-panel {
+            background: rgba(0,0,0,0.7);
+            padding: 15px 25px;
+            border-radius: 12px;
+            border: 1px solid #444;
+        }
+        
+        #status { font-weight: bold; }
+        .detected { color: #2ecc71; }
+        .waiting { color: #f1c40f; }
     </style>
 </head>
 <body>
-    <h1>gugugaga</h1>
+
     <div class="container">
+        <h2 style="margin: 0;">🦝 Raccoon AI System</h2>
+        
         <video id="webcam" autoplay playsinline></video>
-        <canvas id="output_canvas" width="640" height="480"></canvas>
+        
+        <img id="raccoon_view" src="normal.png">
+        
+        <div class="info-panel">
+            Статус: <span id="status" class="waiting">Загрузка модулей...</span><br>
+            <div style="margin-top: 5px; font-size: 1.2em;">
+                Текущий енот: <span id="emo_label" style="color: #3498db;">normal</span>
+            </div>
+        </div>
     </div>
-    <br>
-    <img id="raccoon_view" src="normal.png">
-    <p id="status">Загрузка нейросети...</p>
 
     <script>
         const video = document.getElementById('webcam');
         const raccoonImg = document.getElementById('raccoon_view');
-        const status = document.getElementById('status');
+        const statusTxt = document.getElementById('status');
+        const emoLabel = document.getElementById('emo_label');
 
-        // Инициализация Face Mesh (самая легкая модель для браузера)
-        const faceMesh = new FaceMesh({locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-        }});
+        let currentEmotion = "normal.png";
 
+        // --- НАСТРОЙКА НЕЙРОСЕТЕЙ ---
+        
+        const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
         faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5 });
 
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6 });
+
+        // --- ЛОГИКА ЛИЦА (Shock, Cool, Sad) ---
+        
         faceMesh.onResults((results) => {
-            status.innerText = "Система активна";
-            let emotion = "normal.png";
-
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-                const landmarks = results.multiFaceLandmarks[0];
+                const f = results.multiFaceLandmarks[0];
                 
-                // Расстояние между губами (индексы 13 и 14)
-                const upperLip = landmarks[13];
-                const lowerLip = landmarks[14];
-                const mouthOpen = Math.abs(upperLip.y - lowerLip.y);
+                // Расчет открытия рта
+                const mouthOpen = Math.abs(f[13].y - f[14].y);
+                // Уголки губ вниз для грусти
+                const isSad = f[61].y > f[13].y + 0.012 && f[291].y > f[13].y + 0.012;
 
-                if (mouthOpen > 0.02 && mouthOpen < 0.05) emotion = "cool.png";
-                else if (mouthOpen >= 0.05) emotion = "shock.png";
-            }
-            
-            // Чтобы не дергалось, меняем только если картинка другая
-            if (raccoonImg.src.indexOf(emotion) === -1) {
-                raccoonImg.src = emotion;
+                if (mouthOpen > 0.05) setEmo("shock.png");
+                else if (mouthOpen > 0.02) setEmo("cool.png");
+                else if (isSad) setEmo("sad.png");
+                else if (!isHandGestureActive()) setEmo("normal.png");
             }
         });
 
+        // --- ЛОГИКА РУК (Beg, Cinema, Gun, Pls) ---
+        
+        let handActive = false;
+
+        hands.onResults((results) => {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                handActive = true;
+                const hLms = results.multiHandLandmarks;
+
+                // ДВЕ РУКИ В КАДРЕ
+                if (hLms.length === 2) {
+                    const h1 = hLms[0][0]; // запястье 1
+                    const h2 = hLms[1][0]; // запястье 2
+                    const dist = Math.abs(h1.x - h2.x);
+
+                    if (h1.y < 0.5 && h2.y < 0.5) {
+                        if (dist < 0.18) setEmo("beg.png");    // Руки вместе
+                        else setEmo("cinema.png");             // Руки врозь
+                    }
+                } 
+                // ОДНА РУКА В КАДРЕ
+                else {
+                    const h = hLms[0];
+                    const indexTip = h[8];
+                    const wrist = h[0];
+
+                    // Пистолет
+                    if (Math.abs(indexTip.x - wrist.x) > 0.3 && indexTip.y < wrist.y) {
+                        setEmo("gun.png");
+                    }
+                    // Пожалуйста
+                    else if (wrist.y < 0.4) {
+                        setEmo("pls.png");
+                    }
+                }
+            } else {
+                handActive = false;
+            }
+        });
+
+        // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
+        function setEmo(name) {
+            if (currentEmotion !== name) {
+                currentEmotion = name;
+                raccoonImg.src = name;
+                emoLabel.innerText = name.replace(".png", "");
+            }
+        }
+
+        function isHandGestureActive() {
+            return ["beg.png", "cinema.png", "gun.png", "pls.png"].includes(currentEmotion) && handActive;
+        }
+
+        function onStatusChange(ok) {
+            statusTxt.innerText = ok ? "Система активна ✅" : "Камера не видит лицо";
+            statusTxt.className = ok ? "detected" : "waiting";
+        }
+
         const camera = new Camera(video, {
-            onFrame: async () => { await faceMesh.send({image: video}); },
+            onFrame: async () => {
+                await faceMesh.send({image: video});
+                await hands.send({image: video});
+                onStatusChange(true);
+            },
             width: 640, height: 480
         });
         camera.start();
