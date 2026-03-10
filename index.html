@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Raccoon AI Web</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+    <style>
+        body { text-align: center; background: #222; color: white; font-family: sans-serif; }
+        .container { position: relative; display: inline-block; }
+        #webcam { transform: rotateY(180deg); width: 640px; height: 480px; background: #000; }
+        #output_canvas { position: absolute; left: 0; top: 0; transform: rotateY(180deg); }
+        #raccoon_view { width: 300px; height: 300px; margin-top: 20px; border: 2px solid #555; }
+    </style>
+</head>
+<body>
+    <h1>🦝 Raccoon AI System (Web Edition)</h1>
+    <div class="container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
+    <br>
+    <img id="raccoon_view" src="normal.png">
+    <p id="status">Загрузка нейросети...</p>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const raccoonImg = document.getElementById('raccoon_view');
+        const status = document.getElementById('status');
+
+        // Инициализация Face Mesh (самая легкая модель для браузера)
+        const faceMesh = new FaceMesh({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+        }});
+
+        faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5 });
+
+        faceMesh.onResults((results) => {
+            status.innerText = "Система активна";
+            let emotion = "normal.png";
+
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                const landmarks = results.multiFaceLandmarks[0];
+                
+                // Расстояние между губами (индексы 13 и 14)
+                const upperLip = landmarks[13];
+                const lowerLip = landmarks[14];
+                const mouthOpen = Math.abs(upperLip.y - lowerLip.y);
+
+                if (mouthOpen > 0.02 && mouthOpen < 0.05) emotion = "cool.png";
+                else if (mouthOpen >= 0.05) emotion = "shock.png";
+            }
+            
+            // Чтобы не дергалось, меняем только если картинка другая
+            if (raccoonImg.src.indexOf(emotion) === -1) {
+                raccoonImg.src = emotion;
+            }
+        });
+
+        const camera = new Camera(video, {
+            onFrame: async () => { await faceMesh.send({image: video}); },
+            width: 640, height: 480
+        });
+        camera.start();
+    </script>
+</body>
+</html>
