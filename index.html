@@ -1,23 +1,23 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Raccoon AI Fixed Edition</title>
+    <title>Raccoon AI: Final Logic</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     <style>
-        body { background: #1a1a1a; color: white; font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
+        body { background: #1a1a1a; color: white; font-family: sans-serif; text-align: center; margin: 0; }
         .main { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
-        #webcam { transform: rotateY(180deg); width: 320px; border-radius: 15px; border: 2px solid #444; }
+        #webcam { transform: rotateY(180deg); width: 320px; border-radius: 10px; border: 2px solid #444; }
         #raccoon_view { width: 350px; height: 350px; object-fit: contain; margin-top: 10px; }
-        #log { background: #000; color: #0f0; padding: 10px; width: 320px; font-family: monospace; font-size: 12px; margin-top: 10px; border-radius: 5px; text-align: left; }
+        #log { background: #000; color: #0f0; padding: 8px; width: 320px; font-family: monospace; font-size: 11px; margin-top: 10px; border-radius: 5px; }
     </style>
 </head>
 <body>
     <div class="main">
         <video id="webcam" autoplay playsinline></video>
         <img id="raccoon_view" src="normal.png">
-        <div id="log">Статус: Инициализация...</div>
+        <div id="log">Статус: Жду камеру...</div>
     </div>
 
     <script>
@@ -26,13 +26,11 @@
         const log = document.getElementById('log');
         let currentEmotion = "normal.png";
 
-        // Настройка Pose (Тело)
         const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
-        pose.setOptions({ modelComplexity: 1, minDetectionConfidence: 0.5 });
+        pose.setOptions({ modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
 
-        // Настройка FaceMesh (Лицо)
         const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
-        faceMesh.setOptions({ maxNumFaces: 1, minDetectionConfidence: 0.5 });
+        faceMesh.setOptions({ maxNumFaces: 1, minDetectionConfidence: 0.6 });
 
         let poseActive = false;
 
@@ -45,39 +43,41 @@
 
                 let emo = "normal.png";
 
-                // Проверка видимости: нейросеть должна быть уверена, что видит точку
-                const leftVisible = l_wrist.visibility > 0.6;
-                const rightVisible = r_wrist.visibility > 0.6;
+                // ОЧЕНЬ СТРОГАЯ ПРОВЕРКА ВИДИМОСТИ (0.8)
+                const leftVisible = l_wrist.visibility > 0.8;
+                const rightVisible = r_wrist.visibility > 0.8;
 
                 // 1. Поворот головы (pls)
                 if (Math.abs(nose.x - l_ear.x) < Math.abs(nose.x - r_ear.x) * 0.4) {
                     emo = "pls.png";
                 }
-                // 2. Руки выше носа (beg/cinema) - только если обе руки в кадре
+                // 2. Руки высоко (beg / cinema)
                 else if (leftVisible && rightVisible && l_wrist.y < nose.y - 0.1 && r_wrist.y < nose.y - 0.1) {
-                    emo = Math.abs(l_wrist.x - r_wrist.x) < 0.15 ? "beg.png" : "cinema.png";
+                    emo = Math.abs(l_wrist.x - r_wrist.x) < 0.18 ? "beg.png" : "cinema.png";
                 }
-                // 3. Пистолет (Z-глубина) - только если рука реально видна и вытянута
-                else if ((leftVisible && l_wrist.z < l_sh.z - 0.7) || (rightVisible && r_wrist.z < r_sh.z - 0.7)) {
-                    emo = "gun.png";
-                }
-                // 4. Рука у лица (hard)
-                else if (leftVisible && l_wrist.y < nose.y && Math.abs(l_wrist.x - nose.x) < 0.2) {
+                // 3. HARD (Рука у лица) - ТЕПЕРЬ ВАЖНЕЕ ПУШКИ
+                else if (leftVisible && l_wrist.y < nose.y && Math.abs(l_wrist.x - nose.x) < 0.25) {
                     emo = "hard.png";
+                }
+                // 4. ПУШКА (Z-глубина) - срабатывает только если рука РЕАЛЬНО впереди
+                else if ((leftVisible && l_wrist.z < l_sh.z - 0.8) || (rightVisible && r_wrist.z < r_sh.z - 0.8)) {
+                    emo = "gun.png";
                 }
 
                 if (emo !== "normal.png") {
                     update(emo);
                     poseActive = true;
-                    log.innerText = `Pose: Активен жест ${emo.replace('.png', '')}`;
+                    log.innerText = `POSE: ${emo}`;
                 } else {
                     poseActive = false;
+                    update("normal.png"); // Сброс, если ничего не найдено
                 }
+            } else {
+                poseActive = false;
             }
         });
 
         faceMesh.onResults((results) => {
-            // Если поза активна, лицо не перебивает её
             if (poseActive) return;
 
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
@@ -88,7 +88,7 @@
                 else if (mouth > 0.018) update("cool.png");
                 else update("normal.png");
                 
-                log.innerText = `Face: Рот ${mouth.toFixed(3)}`;
+                log.innerText = `FACE: Mouth ${mouth.toFixed(3)}`;
             }
         });
 
@@ -96,7 +96,6 @@
             if (currentEmotion !== name) {
                 currentEmotion = name;
                 raccoonImg.src = name;
-                console.log("New emotion:", name);
             }
         }
 
@@ -107,10 +106,7 @@
             },
             width: 640, height: 480
         });
-        
-        camera.start()
-            .then(() => log.innerText = "Система готова! Покажи жест.")
-            .catch(err => log.innerText = "Ошибка: " + err);
+        camera.start();
     </script>
 </body>
 </html>
